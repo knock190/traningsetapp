@@ -4,10 +4,10 @@
 入力を最短にして、記録の継続を助けることを目的としています。
 
 関連ドキュメント:
-- `docs/requirements.md`
-- `docs/usecases.md`
-- `docs/ubiquitous-language.md`
-- `docs/domain-design.md`
-- `docs/ui-design.md`
-- `docs/api-design.md`
-- `docs/db-schema.md`
+- `docs/01-requirements.md`
+- `docs/02-usecases.md`
+- `docs/03-ubiquitous-language.md`
+- `docs/04-domain-design.md`
+- `docs/05-ui-design.md`
+- `docs/06-api-design.md`
+- `docs/07-db-schema.md`
