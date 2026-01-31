@@ -1,39 +1,31 @@
-import { and, eq, gte, lte } from 'drizzle-orm'
-import { db } from '../client/db'
-import { workoutRecords } from '../db/schema'
+import 'server-only'
+
 import type { WorkoutRecordInput } from '../dto/workout.dto'
+import * as api from './workout/workout.api'
+import * as db from './workout/workout.db'
 
-export async function listRecords(from: string, to: string) {
-  return db
-    .select()
-    .from(workoutRecords)
-    .where(and(gte(workoutRecords.date, from), lte(workoutRecords.date, to)))
-}
+const dataSource = process.env.WORKOUT_DATA_SOURCE ?? 'db'
 
-export async function createRecord(input: WorkoutRecordInput) {
-  const now = new Date()
-  const record = {
-    id: crypto.randomUUID(),
-    ...input,
-    createdAt: now,
-    updatedAt: now,
+class WorkoutService {
+  private useApi() {
+    return dataSource === 'api'
   }
 
-  await db.insert(workoutRecords).values(record)
-  return record
-}
-
-export async function updateRecord(id: string, input: WorkoutRecordInput) {
-  const now = new Date()
-  const record = {
-    ...input,
-    updatedAt: now,
+  async listRecords({ from, to }: { from: string; to: string }) {
+    return this.useApi() ? api.listRecords(from, to) : db.listRecords(from, to)
   }
 
-  await db.update(workoutRecords).set(record).where(eq(workoutRecords.id, id))
-  return { id, ...record }
+  async createRecord(input: WorkoutRecordInput) {
+    return this.useApi() ? api.createRecord(input) : db.createRecord(input)
+  }
+
+  async updateRecord(id: string, input: WorkoutRecordInput) {
+    return this.useApi() ? api.updateRecord(id, input) : db.updateRecord(id, input)
+  }
+
+  async deleteRecord(id: string) {
+    return this.useApi() ? api.deleteRecord(id) : db.deleteRecord(id)
+  }
 }
 
-export async function deleteRecord(id: string) {
-  await db.delete(workoutRecords).where(eq(workoutRecords.id, id))
-}
+export const workoutService = new WorkoutService()

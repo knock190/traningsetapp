@@ -1,289 +1,291 @@
-## 認証システム実装ガイド
+# 認証設計（プロジェクト固有）
 
-### 概要
-Better Auth を使用した認証システム。Google OAuth 2.0 による認証と、stateless セッション管理を採用する。
+This document captures the current authentication design implemented in this repository. It is intended to be copied to external documentation (e.g., Notion) while also living in the repo root for versioned reference.
 
-### 技術スタック
-| 項目 | 技術 |
-| --- | --- |
-| 認証ライブラリ | Better Auth |
-| OAuth プロバイダ | Google OAuth 2.0 |
-| セッション管理 | Stateless（Cookie ベース） |
-| ユーザーデータ | PostgreSQL（accounts テーブル） |
-| キャッシュ | Next.js unstable_cache |
+## 1. 目的とスコープ
 
-### アーキテクチャ
+- Provide Google OAuth login and session management for the Next.js app.
+- Attach the authenticated `account` entity to the session for downstream use.
+- Enforce authentication in the Next.js layer; backend APIs assume trusted callers.
+
+## 2. 信頼境界
+
+- **Auth responsibility**: Next.js (BFF) handles authentication and session checks.
+- **Backend assumption**: API requests are made only by the trusted Next.js server.
+- **Implication**: Backend does **not** verify auth headers; it trusts `ownerId` provided by the caller.
+
+## 3. 認証プロバイダーとライブラリ
+
+- **Provider**: Google OAuth 2.0
+- **Library**: `better-auth` (stateless, cookie-based session)
+- **Session caching**: 5 minutes via cookie cache
+
+Relevant file:
+- `frontend/src/features/auth/lib/better-auth.ts`
+
+## 4. セッションモデル
+
+- Session is cookie-based and stateless.
+- A custom session is created with `customSession` to include `account`.
+- Session shape (conceptual):
+  - `user`: provider user info (id, email, name, image)
+  - `session`: session metadata (id, userId, expiresAt)
+  - `account`: application-level account record
+
+## 5. アカウント作成・同期
+
+- On OAuth success, create or update the account in the backend:
+  - `POST /api/accounts/auth`
+- If `customSession` cannot find an account by email, it attempts creation again (first login fallback).
+- Account cache is invalidated after successful OAuth processing.
+
+Relevant files:
+- `frontend/src/features/auth/lib/better-auth.ts`
+- `frontend/src/external/handler/account/account.command.server.ts`
+
+## 6. キャッシュ戦略
+
+- Account lookup in `customSession` is cached with `unstable_cache`.
+- Cache TTL: 5 minutes.
+- Cache invalidation: `updateTag("account")` after account creation/update.
+
+Relevant file:
+- `frontend/src/features/auth/lib/better-auth.ts`
+
+## 7. 認証ガード（チェックの適用箇所）
+
+### サーバーサイドのリダイレクトガード
+
+- `requireAuthServer()` redirects to `/login` if no valid session.
+- `getAuthenticatedSessionServer()` returns a guaranteed authenticated session or redirects.
+
+Relevant file:
+- `frontend/src/features/auth/servers/redirect.server.ts`
+
+### Server Action ガード
+
+- `withAuth()` wraps server actions and injects `accountId` from session.
+
+Relevant file:
+- `frontend/src/features/auth/servers/auth.guard.ts`
+
+## 8. ログイン / ログアウト UX
+
+- Login page: `/login`
+- Login action uses `signIn` from `better-auth`.
+- Logout uses `signOut`.
+
+Relevant files:
+- `frontend/src/features/auth/lib/better-auth-client.ts`
+- `frontend/src/features/auth/components/client/LoginPageClient/*`
+
+## 9. バックエンド API の前提
+
+- Backend does **not** validate auth headers.
+- It trusts `ownerId` passed from the Next.js layer.
+- Auth endpoint for OAuth linkage:
+  - `POST /api/accounts/auth` (Create or Get account)
+
+Relevant docs:
+- `docs/global_design/07_api_design.md`
+
+## 10. 認可ルール（要約）
+
+- Owner check required for:
+  - Note update / delete / publish / unpublish
+  - Template update / delete
+- Status-based constraints:
+  - Notes: Draft vs Publish access
+  - Templates: isUsed=true restricts structure changes
+
+Relevant docs:
+- `docs/global_design/07_api_design.md`
+
+## 11. 環境変数
+
+- `GOOGLE_CLIENT_ID`
+- `GOOGLE_CLIENT_SECRET`
+- `NEXTAUTH_URL`
+- `NEXTAUTH_SECRET`
+- `NEXT_PUBLIC_APP_URL`
+
+Relevant file:
+- `frontend/src/features/auth/lib/better-auth.ts`
+- `frontend/src/features/auth/lib/better-auth-client.ts`
+
+## 12. アカウントデータモデル（主要フィールド）
+
+- `id`
+- `email`
+- `firstName`
+- `lastName`
+- `provider` (e.g., "google")
+- `providerAccountId`
+- `thumbnail`
+- `lastLoginAt`
+
+Relevant docs:
+- `docs/global_design/05_domain_design.md`
+- `docs/global_design/06_database_design.md`
+
+## 13. テストチェックリスト（最低限）
+
+- First login creates account and attaches to session.
+- Re-login updates profile and `lastLoginAt`.
+- Unauthenticated access redirects to `/login`.
+- Non-owner actions are rejected.
+
+## 14. ディレクトリ構造（認証 + アカウント連携）
+
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        認証フロー                                │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  ユーザー                                                        │
-│     │                                                           │
-│     ▼                                                           │
-│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐         │
-│  │ ログイン    │───▶│ Google     │───▶│ コールバック │         │
-│  │ ボタン     │    │ OAuth 2.0  │    │ /api/auth/* │         │
-│  └─────────────┘    └─────────────┘    └──────┬──────┘         │
-│                                               │                 │
-│                                               ▼                 │
-│                                        ┌─────────────┐         │
-│                                        │ Better Auth │         │
-│                                        │ (stateless) │         │
-│                                        └──────┬──────┘         │
-│                                               │                 │
-│                      ┌────────────────────────┼────────────┐   │
-│                      │                        │            │   │
-│                      ▼                        ▼            ▼   │
-│               ┌─────────────┐         ┌─────────────┐  ┌─────┐│
-│               │ onSuccess   │         │customSession│  │Cookie││
-│               │ (初回のみ)  │         │ (毎回実行)  │  │保存 ││
-│               └──────┬──────┘         └──────┬──────┘  └─────┘│
-│                      │                       │                 │
-│                      ▼                       ▼                 │
-│               ┌─────────────┐         ┌─────────────┐         │
-│               │ handler     │         │unstable_cache│         │
-│               │ (command)   │         │ (5分キャッシュ)│        │
-│               └──────┬──────┘         └──────┬──────┘         │
-│                      │                       │                 │
-│                      ▼                       ▼                 │
-│               ┌─────────────────────────────────────┐         │
-│               │         accounts テーブル           │         │
-│               │    (id, email, provider, etc.)     │         │
-│               └─────────────────────────────────────┘         │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
+frontend/src
+├─ app
+│  ├─ api/auth/[...all]/route.ts            # better-auth のAPIルート
+│  ├─ (guest)/login/                        # ログイン画面
+│  └─ (authenticated)/                      # 認証必須エリア（layoutでガード）
+│
+├─ features/auth
+│  ├─ lib/
+│  │  ├─ better-auth.ts                     # 認証本体設定（OAuth/Session/customSession）
+│  │  └─ better-auth-client.ts              # client側の signIn/signOut/useSession
+│  ├─ servers/
+│  │  ├─ auth.server.ts                     # セッション取得
+│  │  ├─ redirect.server.ts                 # 認証必須/未認証リダイレクト
+│  │  ├─ auth.guard.ts                      # Server Action 用 withAuth
+│  │  └─ auth-check.server.ts               # 認証状態チェック
+│  ├─ components/
+│  │  ├─ client/LoginPageClient/*           # ログインUI（Googleログイン導線）
+│  │  └─ server/LoginPageTemplate/*         # ログインページのサーバー側ラッパー
+│  └─ types/better-auth.d.ts                # Session型拡張
+│
+├─ external/handler/account
+│  ├─ account.command.server.ts             # OAuth成功時の createOrGetAccount など
+│  ├─ account.command.action.ts             # Server Action 入口（withAuth適用）
+│  ├─ account.query.server.ts               # account取得クエリ
+│  └─ account.query.action.ts               # Server Action 入口
+│
+├─ external/service/account
+│  └─ account.service.ts                    # AccountsApi への通信ラッパー
+│
+├─ external/dto/account.dto.ts              # Account の DTO / バリデーション
+│
+├─ external/client/api
+│  ├─ config.ts                             # APIクライアント設定
+│  └─ generated/*                           # OpenAPI 生成コード（AccountsApi等）
+│
+├─ external/handler/auth
+│  └─ token.command.server.ts               # 認証トークン関連のサーバー処理
+├─ external/service/auth
+│  └─ token-verification.service.ts         # トークン検証サービス
+└─ external/client/google-auth
+   └─ client.ts                             # Google OAuth クライアント
 ```
 
-### Stateless セッションとは
-| 項目 | Stateful | Stateless（採用） |
-| --- | --- | --- |
-| セッション保存 | DB（sessions テーブル） | Cookie（署名付き） |
-| DBアクセス | 毎リクエスト | 不要 |
-| スケーラビリティ | サーバー間で共有必要 | 各サーバーで独立処理可能 |
-| ログアウト | DBから削除 | Cookie削除のみ |
+## 15. BFFがDB直結とAPI呼び出しの違い（実例）
 
-#### メリット
-- DBへのセッション問い合わせが不要（高速）
-- 水平スケーリングが容易
-- sessionsテーブルが不要
+### 15.1 比較（要点）
 
-#### デメリット
-- サーバー側から強制ログアウトが難しい
-- セッションデータの即時更新が難しい
+| 観点 | DB直結（BFF→DB） | API呼び出し（BFF→Backend API→DB） |
+|---|---|---|
+| 接続先 | BFFが直接DBに接続 | BFFはHTTP/gRPCでバックエンドへ |
+| 変更耐性 | DB変更がフロントに直撃 | API契約維持で影響を抑制 |
+| セキュリティ境界 | BFFにDB権限が必要 | DB権限はバックエンドに集約 |
+| スケール | BFFとDBの結合が強い | バックエンドで分離・拡張しやすい |
+| 認証/認可 | BFF内で完結しがち | バックエンド側で厳密化しやすい |
+| 開発速度 | 速い（直結で楽） | API設計・実装が必要 |
 
-### 処理フロー詳細
+### 15.2 コード差分例（Note作成）
 
-#### 1. ログインボタンクリック
-```typescript
-// features/auth/components/client/LoginForm.tsx
-const handleLogin = async () => {
-  await signIn.social({
-    provider: 'google',
-    callbackURL: '/',
+**API呼び出し版（現行実装）**  
+`frontend/src/external/service/note/note.service.ts`
+
+```ts
+async createNote(ownerId: string, request: CreateNoteRequest) {
+  const note = await this.api.notesCreateNote({
+    modelsCreateNoteRequest: {
+      title: request.title,
+      templateId: request.templateId,
+      ownerId,
+      sections: request.sections?.map((section) => ({
+        fieldId: section.fieldId,
+        content: section.content,
+      })) ?? [],
+    },
+  });
+  return toNoteResponse(note);
+}
+```
+
+**DB直結版（ドキュメント上の例）**  
+`frontend/docs/05_external_layer.md`
+
+```ts
+// 現在: Next.jsから直接DB操作（開発効率重視）
+const result = await db
+  .insert(notes)
+  .values({
+    id: generateId(),
+    title: input.title,
+    templateId: input.templateId,
+    ownerId: userId,
+    status: 'Draft',
   })
-}
+  .returning();
 ```
 
-#### 2. Google OAuth 認証
-1. ユーザーがGoogleのログイン画面にリダイレクト
-2. Googleアカウントでログイン
-3. 認可コードがコールバックURLに返される
-4. Better Authがアクセストークンを取得
+## 16. セキュリティ設定（Cookie / CSRF）
 
-#### 3. Better Auth コールバック処理
-```typescript
-// app/api/auth/[...all]/route.ts
-import { toNextJsHandler } from 'better-auth/next-js'
-import { auth } from '@/features/auth/lib/better-auth'
+- セッションは Cookie ベース（better-auth の stateless モード）。
+- Cookie 属性（`httpOnly / sameSite / secure`）は明示設定がなく、デフォルト挙動に依存。**要確認**。
+- CSRF 対策はリポジトリ内に明示設定が見当たらないため、**better-auth/Next.js の標準挙動に依存**。**要確認**。
 
-export const { GET, POST } = toNextJsHandler(auth)
-```
+## 17. OAuth 運用設定
 
-#### 4. onSuccess コールバック（初回ログイン時）
-```typescript
-// features/auth/lib/better-auth.ts
-socialProviders: {
-  google: {
-    clientId: process.env.GOOGLE_CLIENT_ID || '',
-    clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
-    async onSuccess(ctx) {
-      await createOrGetAccountCommand({
-        email: ctx.user.email,
-        name: ctx.user.name || ctx.user.email,
-        provider: 'google',
-        providerAccountId: ctx.user.id,
-        thumbnail: ctx.user.image || undefined,
-      })
-    }
-  }
-}
-```
+- Redirect URI:
+  - `${BASE_URL}/api/auth/callback/google`
+  - `BASE_URL` は `NEXTAUTH_URL` → `NEXT_PUBLIC_APP_URL` → `http://localhost:3000` の順で解決。
+- ログイン後の遷移:
+  - `callbackURL: "/notes"`
+- OAuth スコープや許可ドメインは明示設定が見当たらないため、**デフォルト挙動**。**要確認**。
 
-#### 5. customSession プラグイン（毎回実行）
-```typescript
-// features/auth/lib/better-auth.ts
-customSession(async ({ user, session }) => {
-  let account = await getCachedAccount(user.email)
-  if (!account) {
-    await createOrGetAccountCommand({ ... })
-    account = await getAccountByEmailQuery(user.email)
-  }
-  return { user, session, account }
-})
-```
+Relevant file:
+- `frontend/src/external/client/google-auth/client.ts`
+- `frontend/src/features/auth/components/client/LoginPageClient/useLoginClient.ts`
 
-#### 6. セッション取得
-```typescript
-// features/auth/servers/auth.server.ts
-export async function getSessionServer(): Promise<Session | null> {
-  return await auth.api.getSession({ headers: await headers() })
-}
-```
+## 18. セッション有効期限と再認証条件
 
-### キャッシュ戦略
-#### サーバーサイド（unstable_cache）
-```typescript
-const getCachedAccount = unstable_cache(
-  async (email: string): Promise<Account | null> => {
-    return await getAccountByEmailQuery(email)
-  },
-  ['account-by-email'],
-  {
-    revalidate: 300,
-    tags: ['account'],
-  }
-)
-```
+- Cookie キャッシュ期間: 5 分（`cookieCache.maxAge`）。
+- セッションの実際の失効時間は明示設定が見当たらないため **要確認**。
+- セッションが無効/エラーの場合は `/login` にリダイレクト。
 
-| 設定 | 値 | 説明 |
-| --- | --- | --- |
-| revalidate | 300秒 | キャッシュの有効期間 |
-| tags | ["account"] | revalidateTag で無効化可能 |
+Relevant file:
+- `frontend/src/features/auth/lib/better-auth.ts`
+- `frontend/src/features/auth/servers/redirect.server.ts`
 
-#### クライアントサイド（Cookie Cache）
-```typescript
-session: {
-  cookieCache: {
-    enabled: true,
-    maxAge: 5 * 60,
-  },
-}
-```
+## 19. ログアウトの挙動
 
-### 型定義（Module Augmentation）
-```typescript
-// features/auth/types/better-auth.d.ts
-declare module 'better-auth' {
-  interface Session {
-    account?: Account
-  }
-}
-```
+- クライアントで `signOut()` を実行。
+- React Query のキャッシュを全クリアし、`/login` へ遷移。
+- サーバー側のセッション破棄や失効ポリシーは明示設定が見当たらないため **要確認**。
 
-### 認証ガード
-#### サーバーコンポーネント
-```typescript
-// features/auth/servers/redirect.server.ts
-export async function requireAuthServer(): Promise<Session> {
-  const session = await getSessionServer()
-  if (!session?.account?.id) {
-    redirect('/login')
-  }
-  return session
-}
-```
+Relevant file:
+- `frontend/src/shared/components/layout/client/Header/useHeader.ts`
 
-### 環境変数
-```env
-# Google OAuth
-GOOGLE_CLIENT_ID=your-client-id
-GOOGLE_CLIENT_SECRET=your-client-secret
+## 20. 失敗時フロー（UX）
 
-# Better Auth
-NEXTAUTH_URL=http://localhost:3000
-BETTER_AUTH_SECRET=your-secret-key
-```
+- OAuth 成功後のアカウント作成/更新に失敗した場合はエラーをログ出力し、認証を失敗として扱う。
+- セッションエラーや未認証時は `/login` にリダイレクト。
+- ユーザー向けのエラーメッセージ表示は明示実装が見当たらないため **要確認**。
 
-### データベーススキーマ
-```typescript
-// external/db/schema.ts
-export const accounts = pgTable(
-  'accounts',
-  {
-    id: uuid('id').primaryKey().defaultRandom(),
-    email: text('email').notNull(),
-    name: text('name').notNull(),
-    provider: text('provider').notNull(),
-    providerAccountId: text('provider_account_id').notNull(),
-    thumbnail: text('thumbnail'),
-    lastLoginAt: timestamp('last_login_at'),
-    createdAt: timestamp('created_at').defaultNow(),
-    updatedAt: timestamp('updated_at').defaultNow(),
-  },
-  (table) => ({
-    emailIdx: uniqueIndex('accounts_email_idx').on(table.email),
-    providerIdx: uniqueIndex('accounts_provider_idx').on(
-      table.provider,
-      table.providerAccountId
-    ),
-  })
-)
-```
+Relevant file:
+- `frontend/src/features/auth/lib/better-auth.ts`
+- `frontend/src/features/auth/servers/redirect.server.ts`
 
-### ユニーク制約
-| 制約 | カラム | 目的 |
-| --- | --- | --- |
-| accounts_email_idx | email | メールアドレスの重複防止 |
-| accounts_provider_idx | (provider, provider_account_id) | 同一プロバイダの重複防止 |
+## 21. アカウントのライフサイクル
 
-### 重複アカウント処理
-```typescript
-// external/repository/account.repository.ts
-.onConflictDoUpdate({
-  target: [accounts.provider, accounts.providerAccountId],
-  set: {
-    email: data.email,
-    name: data.name,
-    thumbnail: data.thumbnail,
-    lastLoginAt: new Date(),
-    updatedAt: new Date(),
-  },
-})
-```
+- OAuth ログイン時に `createOrGetAccount` で作成/更新。
+- 退会/無効化/メール変更などのライフサイクルは明示設計が見当たらないため **要確認**。
 
-### ファイル構成
-```
-features/auth/
-├── lib/
-│   ├── better-auth.ts
-│   └── better-auth-client.ts
-├── servers/
-│   ├── auth.server.ts
-│   └── redirect.server.ts
-├── types/
-│   └── better-auth.d.ts
-├── components/
-│   ├── client/
-│   │   └── LoginForm/
-│   └── server/
-│       └── LoginPageTemplate/
-└── hooks/
-    └── useSession.ts
-```
+## 22. 信頼境界の補強策
 
-### トラブルシューティング
-#### セッションが取得できない
-1. Cookieが正しく設定されているか確認
-2. `BETTER_AUTH_SECRET` が設定されているか確認
-3. `NEXTAUTH_URL` が正しいか確認
-
-#### アカウントが作成されない
-1. データベース接続を確認
-2. accounts テーブルが存在するか確認（`npm run db:push`）
-3. ユニーク制約違反がないか確認
-
-#### customSession でエラー
-1. `getAccountByEmailQuery` がnullを返していないか確認
-2. unstable_cache のタグが正しいか確認
-3. handler → service → repository の呼び出し順序を確認
+- 「BFF を信頼できる前提」を技術的に担保する仕組み（IP 制限、API キー、内部ネットワーク等）は明示されていないため **要確認**。

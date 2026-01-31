@@ -8,3 +8,7 @@ export async function requireAuthServer() {
   }
   return session
 }
+
+export async function getAuthenticatedSessionServer() {
+  return requireAuthServer()
+}

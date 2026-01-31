@@ -1,18 +1,20 @@
 'use server'
 
-import { WorkoutRecordInputSchema } from '../dto/workout.dto'
-import { createRecord, deleteRecord, updateRecord } from '../service/workout.service'
+import { withAuth } from '@/features/auth/servers/auth.guard'
+import {
+  createWorkoutRecordCommand,
+  deleteWorkoutRecordCommand,
+  updateWorkoutRecordCommand,
+} from './workout.command.server'
 
-export async function createWorkoutRecordAction(request: unknown) {
-  const validated = WorkoutRecordInputSchema.parse(request)
-  return createRecord(validated)
-}
+export const createWorkoutRecordAction = withAuth(async (request: unknown) => {
+  return createWorkoutRecordCommand(request)
+})
 
-export async function updateWorkoutRecordAction(input: { id: string; data: unknown }) {
-  const validated = WorkoutRecordInputSchema.parse(input.data)
-  return updateRecord(input.id, validated)
-}
+export const updateWorkoutRecordAction = withAuth(async (input: { id: string; data: unknown }) => {
+  return updateWorkoutRecordCommand(input)
+})
 
-export async function deleteWorkoutRecordAction(input: { id: string }) {
-  await deleteRecord(input.id)
-}
+export const deleteWorkoutRecordAction = withAuth(async (input: { id: string }) => {
+  await deleteWorkoutRecordCommand(input)
+})
