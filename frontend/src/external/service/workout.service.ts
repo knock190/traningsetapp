@@ -11,20 +11,28 @@ class WorkoutService {
     return dataSource === 'api'
   }
 
-  async listRecords({ from, to }: { from: string; to: string }) {
-    return this.useApi() ? api.listRecords(from, to) : db.listRecords(from, to)
+  async listRecords({ ownerId, from, to }: { ownerId: string; from: string; to: string }) {
+    return this.useApi()
+      ? api.listRecords(ownerId, from, to)
+      : db.listRecords(ownerId, from, to)
   }
 
-  async createRecord(input: WorkoutRecordInput) {
-    return this.useApi() ? api.createRecord(input) : db.createRecord(input)
+  async createRecord(ownerId: string, input: WorkoutRecordInput) {
+    return this.useApi()
+      ? api.createRecord(ownerId, input)
+      : db.createRecord(ownerId, input)
   }
 
-  async updateRecord(id: string, input: WorkoutRecordInput) {
-    return this.useApi() ? api.updateRecord(id, input) : db.updateRecord(id, input)
+  async updateRecord(ownerId: string, id: string, input: WorkoutRecordInput) {
+    return this.useApi()
+      ? api.updateRecord(ownerId, id, input)
+      : db.updateRecord(ownerId, id, input)
   }
 
-  async deleteRecord(id: string) {
-    return this.useApi() ? api.deleteRecord(id) : db.deleteRecord(id)
+  async deleteRecord(ownerId: string, id: string) {
+    return this.useApi()
+      ? api.deleteRecord(ownerId, id)
+      : db.deleteRecord(ownerId, id)
   }
 }
 

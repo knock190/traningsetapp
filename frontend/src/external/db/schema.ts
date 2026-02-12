@@ -9,16 +9,23 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/pg-core'
 
-export const workoutRecords = pgTable('workout_records', {
-  id: text('id').primaryKey(),
-  date: date('date').notNull(),
-  exerciseName: text('exercise_name').notNull(),
-  reps: integer('reps').notNull(),
-  sets: integer('sets').notNull(),
-  note: text('note'),
-  createdAt: timestamp('created_at', { withTimezone: false }).notNull(),
-  updatedAt: timestamp('updated_at', { withTimezone: false }).notNull(),
-})
+export const workoutRecords = pgTable(
+  'workout_records',
+  {
+    id: text('id').primaryKey(),
+    ownerId: text('owner_id').notNull(),
+    date: date('date').notNull(),
+    exerciseName: text('exercise_name').notNull(),
+    reps: integer('reps').notNull(),
+    sets: integer('sets').notNull(),
+    note: text('note'),
+    createdAt: timestamp('created_at', { withTimezone: false }).notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: false }).notNull(),
+  },
+  (table) => ({
+    ownerIdx: index('workout_records_owner_id_idx').on(table.ownerId),
+  })
+)
 
 export const user = pgTable(
   'users',

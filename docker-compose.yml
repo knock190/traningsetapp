@@ -19,7 +19,7 @@ services:
     ports:
       - "3000:3000"
     env_file:
-      - ./frontend/.env
+      - ./frontend/.env.local
     environment:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/traningsetapp
     depends_on:

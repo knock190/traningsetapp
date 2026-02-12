@@ -4,8 +4,12 @@ import { workoutService } from '../service/workout.service'
 import type { MonthlySummaryDto, WeeklySummaryDto, WorkoutRecordDto } from '../dto/workout.dto'
 import { formatDateYmd, getMonthRange, getWeekRange } from '@/shared/lib/date'
 
-export async function listWorkoutRecordsServer(from: string, to: string): Promise<WorkoutRecordDto[]> {
-  const records = await workoutService.listRecords({ from, to })
+export async function listWorkoutRecordsServer(
+  ownerId: string,
+  from: string,
+  to: string
+): Promise<WorkoutRecordDto[]> {
+  const records = await workoutService.listRecords({ ownerId, from, to })
   return records.map((record) => ({
     id: record.id,
     date: record.date,
@@ -18,12 +22,15 @@ export async function listWorkoutRecordsServer(from: string, to: string): Promis
   }))
 }
 
-export async function getWeeklySummaryQuery(weekStart: string): Promise<WeeklySummaryDto> {
+export async function getWeeklySummaryQuery(
+  ownerId: string,
+  weekStart: string
+): Promise<WeeklySummaryDto> {
   const start = new Date(weekStart)
   const range = getWeekRange(start)
   const from = formatDateYmd(range.start)
   const to = formatDateYmd(range.end)
-  const records = await workoutService.listRecords({ from, to })
+  const records = await workoutService.listRecords({ ownerId, from, to })
 
   const breakdown = Array.from({ length: 7 }, (_, index) => {
     const date = new Date(range.start)
@@ -42,12 +49,15 @@ export async function getWeeklySummaryQuery(weekStart: string): Promise<WeeklySu
   }
 }
 
-export async function getMonthlySummaryQuery(month: string): Promise<MonthlySummaryDto> {
+export async function getMonthlySummaryQuery(
+  ownerId: string,
+  month: string
+): Promise<MonthlySummaryDto> {
   const [year, monthValue] = month.split('-').map(Number)
   const range = getMonthRange(new Date(year, monthValue - 1, 1))
   const from = formatDateYmd(range.start)
   const to = formatDateYmd(range.end)
-  const records = await workoutService.listRecords({ from, to })
+  const records = await workoutService.listRecords({ ownerId, from, to })
 
   const weeklyBreakdown = []
   let cursor = new Date(range.start)
